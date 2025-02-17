@@ -1,86 +1,110 @@
-//
-//  ContentView.swift
-//  POKEDEX
-//
-//  Created by Bastien VINCENT-DEKENS on 2/17/25.
-//
-
 import SwiftUI
-import CoreData
 
 struct ContentView: View {
-    @Environment(\.managedObjectContext) private var viewContext
+    @StateObject public var fetcher: PokemonFetcher
+    @State private var selectedType: String? = nil
+    @State private var selectedSortOption: SortOption = .alphabetical
+    @State private var searchText: String = ""
 
-    @FetchRequest(
-        sortDescriptors: [NSSortDescriptor(keyPath: \Item.timestamp, ascending: true)],
-        animation: .default)
-    private var items: FetchedResults<Item>
+    enum SortOption {
+        case alphabetical, byStrength, byFavorites
+    }
+
+    var filteredPokemons: [Pokemon] {
+        var filteredPokemons = fetcher.pokemons.filter { pokemon in
+            searchText.isEmpty || pokemon.name.lowercased().contains(searchText.lowercased())
+        }
+
+        if let selectedType = selectedType {
+            filteredPokemons = filteredPokemons.filter { pokemon in
+                pokemon.types.contains { $0.type.name == selectedType }
+            }
+        }
+
+        switch selectedSortOption {
+        case .alphabetical:
+            return filteredPokemons.sorted { $0.name.lowercased() < $1.name.lowercased() }
+        case .byStrength:
+            return filteredPokemons.sorted { pokemon1, pokemon2 in
+                let strength1 = pokemon1.stats.reduce(0) { $0 + $1.base_stat }
+                let strength2 = pokemon2.stats.reduce(0) { $0 + $1.base_stat }
+                return strength1 > strength2
+            }
+        case .byFavorites:
+            return filteredPokemons.sorted { $0.isFavorite && !$1.isFavorite }
+        }
+    }
 
     var body: some View {
         NavigationView {
-            List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp!, formatter: itemFormatter)")
-                    } label: {
-                        Text(item.timestamp!, formatter: itemFormatter)
+            VStack {
+                // Barre de recherche
+                SearchBar(text: $searchText)
+                    .padding()
+
+                // Filtre par type
+                Picker("Filtrer par type", selection: $selectedType) {
+                    Text("Tous").tag(String?.none)
+                    Text("Eau").tag("water" as String?)
+                    Text("Feu").tag("fire" as String?)
+                    Text("Plante").tag("grass" as String?)
+                    Text("Electrik").tag("electric" as String?)
+                    // Ajouter d'autres types ici
+                }
+                .pickerStyle(MenuPickerStyle())
+                .padding()
+
+                // Liste déroulante pour le tri
+                Picker("Trier par", selection: $selectedSortOption) {
+                    Text("Alphabétique").tag(SortOption.alphabetical)
+                    Text("Force").tag(SortOption.byStrength)
+                    Text("Favoris").tag(SortOption.byFavorites)
+                }
+                .pickerStyle(MenuPickerStyle())
+                .padding()
+
+                // Liste des Pokémon filtrée et triée
+                List(filteredPokemons) { pokemon in
+                    HStack {
+                        AsyncImage(url: URL(string: pokemon.imageURL))
+                            .frame(width: 50, height: 50)
+                        Text(pokemon.name.capitalized)
+                        Spacer()
+                        Button(action: {
+                            fetcher.toggleFavorite(pokemon: pokemon)
+                        }) {
+                            Image(systemName: pokemon.isFavorite ? "star.fill" : "star")
+                                .foregroundColor(pokemon.isFavorite ? .yellow : .gray)
+                        }
                     }
+                    .padding()
                 }
-                .onDelete(perform: deleteItems)
-            }
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    EditButton()
-                }
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
-                    }
-                }
-            }
-            Text("Select an item")
-        }
-    }
-
-    private func addItem() {
-        withAnimation {
-            let newItem = Item(context: viewContext)
-            newItem.timestamp = Date()
-
-            do {
-                try viewContext.save()
-            } catch {
-                // Replace this implementation with code to handle the error appropriately.
-                // fatalError() causes the application to generate a crash log and terminate. You should not use this function in a shipping application, although it may be useful during development.
-                let nsError = error as NSError
-                fatalError("Unresolved error \(nsError), \(nsError.userInfo)")
-            }
-        }
-    }
-
-    private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            offsets.map { items[$0] }.forEach(viewContext.delete)
-
-            do {
-                try viewContext.save()
-            } catch {
-                // Replace this implementation with code to handle the error appropriately.
-                // fatalError() causes the application to generate a crash log and terminate. You should not use this function in a shipping application, although it may be useful during development.
-                let nsError = error as NSError
-                fatalError("Unresolved error \(nsError), \(nsError.userInfo)")
+                .navigationTitle("Pokédex")
             }
         }
     }
 }
 
-private let itemFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.dateStyle = .short
-    formatter.timeStyle = .medium
-    return formatter
-}()
 
-#Preview {
-    ContentView().environment(\.managedObjectContext, PersistenceController.preview.container.viewContext)
+struct SearchBar: View {
+    @Binding var text: String
+
+    var body: some View {
+        HStack {
+            TextField("Rechercher un Pokémon", text: $text)
+                .textFieldStyle(RoundedBorderTextFieldStyle())
+                .padding(.horizontal)
+                .padding(.vertical, 10)
+
+            if !text.isEmpty {
+                Button(action: {
+                    text = ""
+                }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundColor(.gray)
+                }
+                .padding(.trailing)
+            }
+        }
+    }
 }
